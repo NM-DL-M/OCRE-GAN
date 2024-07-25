@@ -1,0 +1,293 @@
+def define_discriminator(image_shape):
+	init = RandomNormal(stddev=0.02)
+	in_image = Input(shape=image_shape)
+	d = Conv2D(64, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(in_image)
+	d = LeakyReLU(alpha=0.2)(d)
+	d = Conv2D(128, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(d)
+	d = InstanceNormalization(axis=-1)(d)
+	d = LeakyReLU(alpha=0.2)(d)
+	d = Conv2D(256, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(d)
+	d = InstanceNormalization(axis=-1)(d)
+	d = LeakyReLU(alpha=0.2)(d) 
+	d = Conv2D(512, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(d)
+	d = InstanceNormalization(axis=-1)(d)
+	d = LeakyReLU(alpha=0.2)(d)
+	d = Conv2D(512, (4,4), padding='same', kernel_initializer=init)(d)
+	d = InstanceNormalization(axis=-1)(d)
+	d = LeakyReLU(alpha=0.2)(d)
+	patch_out = Conv2D(1, (4,4), padding='same', kernel_initializer=init)(d)
+	model = Model(in_image, patch_out)
+	model.compile(loss='mse', optimizer=Adam(lr=XXXX, beta_1=0.5), loss_w
+
+
+def define_generator(image_shape, n_resnet=9):
+	init = RandomNormal(stddev=0.02)
+	in_image = Input(shape=image_shape)
+	g = Conv2D(64, (7,7), padding='same', kernel_initializer=init)(in_image)
+	g = InstanceNormalization(axis=-1)(g)
+	g = Activation('relu')(g)
+	g = Conv2D(128, (3,3), strides=(2,2), padding='same', kernel_initializer=init)(g)
+	g = InstanceNormalization(axis=-1)(g)
+	g = Activation('relu')(g)
+	g = Conv2D(256, (3,3), strides=(2,2), padding='same', kernel_initializer=init)(g)
+	g = InstanceNormalization(axis=-1)(g)
+	g = Activation('relu')(g)
+	for _ in range(n_resnet):
+		g = resnet_block(256, g)
+	g = Conv2DTranspose(128, (3,3), strides=(2,2), padding='same', kernel_initializer=init)(g)
+	g = InstanceNormalization(axis=-1)(g)
+	g = Activation('relu')(g)
+	g = Conv2DTranspose(64, (3,3), strides=(2,2), padding='same', kernel_initializer=init)(g)
+	g = InstanceNormalization(axis=-1)(g)
+	g = Activation('relu')(g)
+	g = Conv2D(3, (7,7), padding='same', kernel_initializer=init)(g)
+	g = InstanceNormalization(axis=-1)(g)
+	out_image = Activation('tanh')(g)
+	model = Model(in_image, out_image)
+	return model
+
+
+def define_composite_model(g_model_1, d_model, g_model_2, image_shape): 
+	g_model_1.trainable = True
+	d_model.trainable = False
+	g_model_2.trainable = False
+	input_gen = Input(shape=image_shape)
+	gen1_out = g_model_1(input_gen)
+	output_d = d_model(gen1_out)
+	input_id = Input(shape=image_shape)
+	output_id = g_model_1(input_id)
+	output_f = g_model_2(gen1_out)
+	gen2_out = g_model_2(input_id)
+	output_b = g_model_1(gen2_out)
+	model = Model([input_gen, input_id], [output_d, output_id, output_f, output_b])
+	opt = Adam(lr=YYYY , beta_1=0.5)
+	model.compile(loss=['mse', 'mae', 'mae', 'mae'], 
+               loss_weights=[W, X, Y, Z], optimizer=opt)
+	return model
+
+
+def plot_metrics(metrics):
+    plt.figure(figsize=(10, 5))
+    plt.plot(metrics)
+    plt.xlabel('Iteration')
+    plt.ylabel('Evaluation Metric')
+    plt.title('Training Metrics')
+    plt.grid(True)
+    plt.show(block=False)
+    plt.pause(0.1)
+
+
+def load_real_samples(filename):
+	data = load(filename)
+	X1, X2 = data['arr_0'], data['arr_1']
+	X1 = (X1 - 127.5) / 127.5
+	X2 = (X2 - 127.5) / 127.5
+	return [X1, X2]
+
+
+def generate_real_samples(dataset, n_samples, patch_shape):
+	ix = randint(0, dataset.shape[0], n_samples)
+	X = dataset[ix]
+	y = ones((n_samples, patch_shape, patch_shape, 1))
+	return X, y
+
+def generate_fake_samples(g_model, dataset, patch_shape):
+	X = g_model.predict(dataset)
+	y = zeros((len(X), patch_shape, patch_shape, 1))
+	return X, y
+
+
+def save_models(step, g_model_AtoB, g_model_BtoA):
+	filename1 = 'name of first model.h5' 
+	g_model_AtoB.save(filename1)
+	filename2 = 'name of second model.h5' 
+	g_model_BtoA.save(filename2)
+	print('>Saved: %s and %s' % (filename1, filename2))
+
+def summarize_performance(step, g_model, trainX, name, n_samples=5):
+	X_in, _ = generate_real_samples(trainX, n_samples, 0)
+	X_out, _ = generate_fake_samples(g_model, X_in, 0)
+	X_in = (X_in + 1) / 2.0
+	X_out = (X_out + 1) / 2.0
+	for i in range(n_samples):
+		pyplot.subplot(2, n_samples, 1 + i)
+		pyplot.axis('off')
+		pyplot.imshow(X_in[i])
+	for i in range(n_samples):
+		pyplot.subplot(2, n_samples, 1 + n_samples + i)
+		pyplot.axis('off')
+		pyplot.imshow(X_out[i])
+	filename1 = '%s_generated_plot_%06d.png' % (name, (step+1))
+	pyplot.savefig(filename1)
+	pyplot.close()
+
+
+
+def train(d_model_A, d_model_B, g_model_AtoB, g_model_BtoA, c_model_AtoB, c_model_BtoA, dataset, epochs=E):	n_epochs, n_batch, = epochs, (batch_size)  
+	n_patch = d_model_A.output_shape[1]
+	trainA, trainB = dataset
+	poolA, poolB = list(), list()
+	bat_per_epo = int(len(trainA) / n_batch)
+	n_steps = bat_per_epo * n_epochs
+	for i in range(n_steps):
+		X_realA, y_realA = generate_real_samples(trainA, n_batch, n_patch)
+		X_realB, y_realB = generate_real_samples(trainB, n_batch, n_patch)
+		X_fakeA, y_fakeA = generate_fake_samples(g_model_BtoA, X_realB, n_patch)
+		X_fakeB, y_fakeB = generate_fake_samples(g_model_AtoB, X_realA, n_patch)
+		X_fakeA = update_image_pool(poolA, X_fakeA)
+		X_fakeB = update_image_pool(poolB, X_fakeB)
+        
+		g_loss2, _, _, _, _  = c_model_BtoA.train_on_batch([X_realB, X_realA], [y_realA, X_realA, X_realB, X_realA])
+		dA_loss1 = d_model_A.train_on_batch(X_realA, y_realA)
+		dA_loss2 = d_model_A.train_on_batch(X_fakeA, y_fakeA)
+		
+		g_loss1, _, _, _, _ = c_model_AtoB.train_on_batch([X_realA, X_realB], [y_realB, X_realB, X_realA, X_realB])
+		# update discriminator for B -> [real/fake]
+		dB_loss1 = d_model_B.train_on_batch(X_realB, y_realB)
+		dB_loss2 = d_model_B.train_on_batch(X_fakeB, y_fakeB)
+		print('Iteration>%d, dA[%.3f,%.3f] dB[%.3f,%.3f] g[%.3f,%.3f]' % (i+1, dA_loss1,dA_loss2, dB_loss1,dB_loss2, g_loss1,g_loss2))
+        		if (i+1) % (bat_per_epo * 1) == 0:
+			summarize_performance(i, g_model_AtoB, trainA, 'AtoB')
+			summarize_performance(i, g_model_BtoA, trainB, 'BtoA')
+		if (i+1) % (bat_per_epo * 5) == 0:
+			save_models(i, g_model_AtoB, g_model_BtoA)
+
+
+def load_images(path, size=(256,256)):
+	data_list = list()
+		for filename in listdir(path):
+		pixels = load_img(path + filename, target_size=size)
+		pixels = img_to_array(pixels)
+		data_list.append(pixels)
+	return asarray(data_list)
+path = 'path/folder'
+dataA = load_images(path + remain1/')
+print('Loaded dataA: ', dataA.shape)
+dataB = load_images(path + 'remain2/')
+print('Loaded dataB: ', dataB.shape)
+
+
+data = [dataA, dataB]
+print('Loaded', data[0].shape, data[1].shape)
+def preprocess_data(data):
+	X1, X2 = data[0], data[1]
+	X1 = (X1 - 127.5) / 127.5
+	X2 = (X2 - 127.5) / 127.5
+	return [X1, X2]
+
+dataset = preprocess_data(data)
+
+from define_cycle_models import define_generator, define_discriminator, define_composite_model, train
+image_shape = dataset[0].shape[1:]
+g_model_AtoB = define_generator(image_shape)
+g_model_BtoA = define_generator(image_shape)
+d_model_A = define_discriminator(image_shape)
+d_model_B = define_discriminator(image_shape)
+c_model_AtoB = define_composite_model(g_model_AtoB, d_model_B, g_model_BtoA, image_shape)
+c_model_BtoA = define_composite_model(g_model_BtoA, d_model_A, g_model_AtoB, image_shape)
+
+
+from datetime import datetime 
+start1 = datetime.now() 
+train(d_model_A, d_model_B, g_model_AtoB, g_model_BtoA, c_model_AtoB, c_model_BtoA, dataset, epochs=X)
+
+stop1 = datetime.now()
+execution_time = stop1-start1
+print("Execution time is: ", execution_time)
+
+g_model_AtoB.save('saving/address 1')
+g_model_BtoA.save(saving/address 2')
+
+
+model_image_size = (256, 256)
+output_image_size = (144, 144)
+image = []
+counter = 100000
+losses = []
+csv_file_path =('C:/Users/Apple shiraz/Desktop/New folder/my_csv_file.csv')
+cust = {'InstanceNormalization': InstanceNormalization}
+model_AtoB = load_model(''saving/address 1', cust, compile = False)
+model_BtoA = load_model (''saving/address 2', cust, compile = False)
+
+for directory_path in glob.glob("test files path"):
+    for img_path in glob.glob(os.path.join(directory_path, "*.png")):
+        csv_file_path =(csv/file/path)
+        image = cv2.imread(img_path,1)
+        image = cv2.resize (image,model_image_size,interpolation=cv2.INTER_AREA)
+        image = img_to_array(image)
+        test_image_input = np.array([image]) .
+        uncorrected = (test_image_input - 127.5) / 127.5
+        corrected_generated  = model_AtoB.predict(uncorrected)
+        reversed_image = model_BtoA.predict (corrected_generated)
+        MSE = tf.keras.losses.MeanSquaredError()(uncorrected, corrected_generated)
+        MSE = tf.convert_to_tensor(float(MSE))
+        MSE = MSE.numpy ()
+        MSE = format(MSE, '.6f')
+        MAE = tf.keras.losses.MeanAbsoluteError()(uncorrected, corrected_generated)
+        MAE = tf.convert_to_tensor(float(MAE))
+        MAE = MAE.numpy ()
+        MAE = format(MAE, '.6f')
+        corrected_generated = np.mean(corrected_generated, axis=3)
+        corrected_generated = np.reshape(corrected_generated, (256, 256))
+        corrected_generated = (corrected_generated*127.5)+127.5
+        corrected_generated = corrected_generated.astype(np.int16)
+        corrected_generated = cv2.resize (corrected_generated,output_image_size,interpolation=cv2.INTER_AREA)
+        #plt.imshow(corrected_generated, cmap='gray')
+        losses.append ([MAE,MSE])
+        
+        suffix = '.dcm'
+        filename_little_endian = tempfile.NamedTemporaryFile (suffix=suffix,prefix = str(counter)+"aaaa",delete=False,
+                dir= 'target/file/path').name
+        
+        
+        print("Setting file meta information...")
+        file_meta = FileMetaDataset()
+        file_meta.MediaStorageSOPClassUID = UID('1.2.840.10008.5.1.4.1.1.2')
+        file_meta.MediaStorageSOPInstanceUID = UID("1.2.3")
+        file_meta.ImplementationClassUID = UID("1.2.3.4")
+        
+        print("Setting dataset values...")
+        ds = FileDataset(filename_little_endian, {}, file_meta=file_meta, preamble=b"\0" * 128)
+        ds = pydicom.Dataset()
+        ds.PatientName = "TEST"
+        ds.PatientID = "12345"
+        ds.Modality = "PET"
+        ds.SeriesInstanceUID = "1.2.3.4.5"
+        ds.SOPInstanceUID = "1.2.3.4.5.1"
+        ds.Rows = corrected_generated.shape[0]
+        ds.Columns = corrected_generated.shape[1]
+        ds.PixelSpacing = [1, 1]
+        ds.ImagePositionPatient = [0, 0, 0]
+        ds.ImageOrientationPatient = [1, 0, 0, 0, 1, 0]
+        ds.RescaleIntercept = 0
+        ds.RescaleSlope = 1
+        ds.BitsAllocated = 16
+        ds.BitsStored = 16
+        ds.HighBit = 15
+        ds.PixelRepresentation = 0
+        ds.SamplesPerPixel = 1
+        ds.PhotometricInterpretation = "MONOCHROME2"
+        ds.PixelData = corrected_generated.tobytes()
+        
+        # Set the transfer syntax
+        ds.is_little_endian = True
+        ds.is_implicit_VR = True
+        
+        dt = datetime.datetime.now()
+        ds.ContentDate = dt.strftime('%Y%m%d')
+        timeStr = dt.strftime('%H%M%S.%f')  # long format with micro seconds
+        ds.ContentTime = timeStr
+          
+        print("Writing test file", filename_little_endian)
+        ds.save_as(filename_little_endian)
+        print("File saved.")
+        counter = int(counter) + 1
+        with open(csv_file_path, 'w') as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(['MAE', 'MSE'])  # write the header
+            writer.writerows(losses)
+            
+df = pd.read_csv(csv_file_path)
+excel_file_path ='excell file.xlsx'
+df.to_excel(excel_file_path, index=True)
+
